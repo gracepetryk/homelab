@@ -1,0 +1,302 @@
+services:
+  tailscale-nginx:
+    # we cant use tsdproxy here beacuse we need an exit node
+    image: tailscale/tailscale:latest
+    container_name: tailscale-nginx
+    hostname: nginx
+    environment:
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+    volumes:
+      - ${HOME}/.local/state/tailscale-nginx/:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+      - sys_module
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - nginx-routable
+    ports:
+      - 80:80
+      - 443:443
+
+  nginx:
+    image: nginx
+    container_name: nginx
+    network_mode: service:tailscale-nginx
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/snippets:/etc/nginx/snippets:ro
+      - ./nginx/dhparam.pem:/etc/nginx/dhparam.pem:ro
+      - ./ssl/certs:/etc/ssl/certs
+      - ./ssl/private:/etc/ssl/private
+      - ./build/vuetorrent:/vuetorrent
+    environment:
+      - HOST_IP=172.17.0.1
+    restart: unless-stopped
+
+  qbt-vpn:
+    build:
+      context: ./docker-wg-go
+      dockerfile: Dockerfile
+    container_name: qbt-vpn
+    environment:
+      - SUBNET=192.168.10.0/24
+    devices:
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    expose:
+      - 8080
+      - 50154
+    networks:
+      wireguard:
+        gw_priority: 1
+      nginx-routable:
+    restart: unless-stopped
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    network_mode: service:qbt-vpn
+    container_name: qbittorrent
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Los_Angeles
+      - WEBUI_PORT=8080
+      - TORRENTING_PORT=50154
+    volumes:
+      - ./config/qBittorrent:/config/qBittorrent
+      - ./build/vuetorrent/:/webui
+      - /media:/media #optional
+      - /media2:/media2 #optional
+    restart: unless-stopped
+
+
+  plex:
+    image: plexinc/pms-docker
+    container_name: plex
+    network_mode: host
+    runtime: nvidia
+    environment:
+      - PUID=1000
+      - PGID=27
+      - TZ=America/Los_Angeles
+      - VERSION=docker
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+    volumes:
+      - ./config/plex:/config
+      - /media:/media
+      - /media2:/media2
+    restart: unless-stopped
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      - PUID=1000
+      - PGID=27
+      - TZ=America/Los_Angeles
+    volumes:
+      - /media:/media
+      - /media2:/media2
+      - ./config/radarr:/config
+
+    restart: unless-stopped
+    networks:
+      - nginx-routable
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Los_Angeles
+    volumes:
+      - ./config/sonarr:/config
+      - /media:/media
+      - /media2:/media2
+    restart: unless-stopped
+    ports:
+      - 8989:8989
+    networks:
+      - nginx-routable
+
+  jackett:
+    # torrent indexer
+
+    image: lscr.io/linuxserver/jackett:latest
+    container_name: jackett
+    environment:
+      - PUID=1000
+      - PGID=27
+      - TZ=America/Los_Angeles
+      - AUTO_UPDATE=true #optional
+      - RUN_OPTS= #optional
+    volumes:
+      - ./config/jackett:/config
+    restart: unless-stopped
+    networks:
+      - nginx-routable
+
+  jackett-no-freeleech:
+    # torrent indexer
+
+    image: lscr.io/linuxserver/jackett:latest
+    container_name: jackett-no-freeleech
+    environment:
+      - PUID=1000
+      - PGID=27
+      - TZ=America/Los_Angeles
+      - AUTO_UPDATE=true #optional
+    volumes:
+      - ./config/jackett_no_freeleech:/config
+    restart: unless-stopped
+    networks:
+      - nginx-routable
+
+  unpackerr:
+    image: ghcr.io/hotio/unpackerr:latest
+    container_name: unpackerr
+    volumes:
+      - /media:/media
+      - /media2:/media2
+    restart: always
+    environment:
+      - TZ=America/Los_Angeles
+      # General config
+      - UN_QUIET=false
+      - UN_DEBUG=false
+      - UN_ERROR_STDERR=true
+      - UN_LOG_QUEUES=1m
+      - UN_LOG_FILES=10
+      - UN_LOG_FILE_MB=10
+      - UN_INTERVAL=2m
+      - UN_START_DELAY=1m
+      - UN_RETRY_DELAY=5m
+      - UN_MAX_RETRIES=3
+      - UN_PARALLEL=1
+      - UN_FILE_MODE=0644
+      - UN_DIR_MODE=0755
+      - UN_ACTIVITY=false
+      # Sonarr Config
+      - UN_SONARR_0_URL=http://sonarr:8989
+      - UN_SONARR_0_API_KEY=${SONARR_KEY}
+      # Radarr Config
+      - UN_RADARR_0_URL=http://radarr:7878
+      - UN_RADARR_0_API_KEY=${RADARR_KEY}
+
+  homeassistant:
+    container_name: homeassistant
+    image: "ghcr.io/home-assistant/home-assistant:stable"
+    volumes:
+      - ./config/homeassistant:/config
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+    network_mode: host
+  matter-server:
+    image: ghcr.io/home-assistant-libs/python-matter-server:stable
+    container_name: matter-server
+    restart: unless-stopped
+    # Required for mDNS to work correctly
+    network_mode: host
+    volumes:
+      # Create an .env file that sets the USERDIR environment variable.
+      - ./config/matter-server/data:/data/
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+    volumes:
+      - ./config/bazarr:/config
+      - /media:/media #optional
+      - /media2:/media2 #optional
+    ports:
+      - 6767:6767
+    restart: unless-stopped
+
+  tailscale-pihole:
+    # we cant use tsdproxy here beacuse we need an exit node
+    image: tailscale/tailscale:latest
+    container_name: tailscale-pihole
+    hostname: pihole
+    environment:
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+    volumes:
+      - ${HOME}/.local/state/tailscale-pihole/:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+      - sys_module
+    restart: unless-stopped
+
+  pihole:
+    container_name: pihole
+    image: pihole/pihole:latest
+    network_mode: service:tailscale-pihole
+    labels:
+      - tsdproxy.enable=true
+      - tsdproxy.ephemeral=false
+    environment:
+      # Set the appropriate timezone for your location (https://en.wikipedia.org/wiki/List_of_tz_database_time_zones), e.g:
+      TZ: 'America/Los_Angeles'
+      # Set a password to access the web interface. Not setting one will result in a random password being assigned
+      FTLCONF_webserver_api_password: ''
+      # If using Docker's default `bridge` network setting the dns listening mode should be set to 'all'
+      FTLCONF_dns_listeningMode: 'all'
+
+      HOSTNAME: pihole
+    # Volumes store your data between container upgrades
+    volumes:
+      # For persisting Pi-hole's databases and common configuration file
+      - './config/pihole:/etc/pihole'
+      # Uncomment the below if you have custom dnsmasq config files that you want to persist. Not needed for most starting fresh with Pi-hole v6. If you're upgrading from v5 you and have used this directory before, you should keep it enabled for the first v6 container start to allow for a complete migration. It can be removed afterwards. Needs environment variable FTLCONF_misc_etc_dnsmasq_d: 'true'
+      #- './etc-dnsmasq.d:/etc/dnsmasq.d'
+    cap_add:
+      # See https://github.com/pi-hole/docker-pi-hole#note-on-capabilities
+      # Optional, if Pi-hole should get some more processing time
+      - SYS_NICE
+    restart: unless-stopped
+
+  wireshark:
+    image: lscr.io/linuxserver/wireshark:latest
+    container_name: wireshark
+    cap_add:
+      - NET_ADMIN
+    security_opt:
+      - seccomp:unconfined #optional
+    network_mode: host
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+    volumes:
+      - ./config/wireshark:/config
+    restart: unless-stopped
+
+volumes:
+  datadir:
+
+networks:
+  nginx-routable:
+    driver: bridge
+    ipam:
+      config:
+      - subnet: 192.168.10.0/24
+        gateway: 192.168.10.1
+  wireguard:
+    driver: bridge
