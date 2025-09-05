@@ -7,7 +7,7 @@ function get_ip_flag() {
 
     num_colons="$(grep -o : <(echo -n $1) | wc -l)"
 
-    if [[ $num_colons -gt 1 ]]; then
+    if [ $num_colons -gt 1 ]; then
         echo -n '-6'
     else
         echo -n '-4'
