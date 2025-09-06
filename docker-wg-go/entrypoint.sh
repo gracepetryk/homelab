@@ -46,4 +46,7 @@ run curl ifconfig.me 2>/dev/null; echo
 run wg
 run curl ifconfig.me 2>/dev/null; echo
 
+
+trap "kill $pid; exit" INT TERM EXIT
+
 wait $pid
