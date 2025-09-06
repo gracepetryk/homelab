@@ -79,11 +79,10 @@ services:
       - /media2:/media2 #optional
     restart: unless-stopped
 
-
   plex:
     image: plexinc/pms-docker
     container_name: plex
-    network_mode: host
+    hostname: tasiatown
     runtime: nvidia
     environment:
       - PUID=1000
@@ -97,6 +96,8 @@ services:
       - /media:/media
       - /media2:/media2
     restart: unless-stopped
+    networks:
+      - nginx-routable
 
   radarr:
     image: lscr.io/linuxserver/radarr:latest
