@@ -18,14 +18,14 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - nginx-routable
+      - nginx
+      - host_bridge
     ports:
       - 80:80
       - 443:443
 
   nginx:
     image: nginx
-    container_name: nginx
     network_mode: service:tailscale-nginx
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
@@ -44,8 +44,6 @@ services:
       context: ./docker-wg-go
       dockerfile: Dockerfile
     container_name: qbt-vpn
-    environment:
-      - SUBNET=192.168.10.0/24
     devices:
       - /dev/net/tun
     cap_add:
@@ -56,16 +54,15 @@ services:
     expose:
       - 8080
       - 50154
-    networks:
-      wireguard:
-        gw_priority: 1
-      nginx-routable:
     restart: unless-stopped
+    networks:
+      - host_bridge
+      - nginx
 
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
-    network_mode: service:qbt-vpn
     container_name: qbittorrent
+    network_mode: service:qbt-vpn
     environment:
       - PUID=1000
       - PGID=1000
@@ -80,7 +77,10 @@ services:
     restart: unless-stopped
 
   plex:
-    image: plexinc/pms-docker
+    # image: plexinc/pms-docker
+    build:
+      context: ./plex-networking
+      dockerfile: Dockerfile
     container_name: plex
     hostname: tasiatown
     runtime: nvidia
@@ -97,7 +97,8 @@ services:
       - /media2:/media2
     restart: unless-stopped
     networks:
-      - nginx-routable
+      - nginx
+      - plex
 
   radarr:
     image: lscr.io/linuxserver/radarr:latest
@@ -113,8 +114,8 @@ services:
 
     restart: unless-stopped
     networks:
-      - nginx-routable
-
+      - nginx
+      - host_bridge
   sonarr:
     image: lscr.io/linuxserver/sonarr:latest
     container_name: sonarr
@@ -130,8 +131,8 @@ services:
     ports:
       - 8989:8989
     networks:
-      - nginx-routable
-
+      - nginx
+      - host_bridge
   jackett:
     # torrent indexer
 
@@ -147,8 +148,8 @@ services:
       - ./config/jackett:/config
     restart: unless-stopped
     networks:
-      - nginx-routable
-
+      - nginx
+      - host_bridge
   jackett-no-freeleech:
     # torrent indexer
 
@@ -163,8 +164,8 @@ services:
       - ./config/jackett_no_freeleech:/config
     restart: unless-stopped
     networks:
-      - nginx-routable
-
+      - nginx
+      - host_bridge
   unpackerr:
     image: ghcr.io/hotio/unpackerr:latest
     container_name: unpackerr
@@ -195,7 +196,6 @@ services:
       # Radarr Config
       - UN_RADARR_0_URL=http://radarr:7878
       - UN_RADARR_0_API_KEY=${RADARR_KEY}
-
   homeassistant:
     container_name: homeassistant
     image: "ghcr.io/home-assistant/home-assistant:stable"
@@ -227,7 +227,6 @@ services:
     ports:
       - 6767:6767
     restart: unless-stopped
-
   tailscale-pihole:
     # we cant use tsdproxy here beacuse we need an exit node
     image: tailscale/tailscale:latest
@@ -244,7 +243,6 @@ services:
       - net_admin
       - sys_module
     restart: unless-stopped
-
   pihole:
     container_name: pihole
     image: pihole/pihole:latest
@@ -265,14 +263,11 @@ services:
     volumes:
       # For persisting Pi-hole's databases and common configuration file
       - './config/pihole:/etc/pihole'
-      # Uncomment the below if you have custom dnsmasq config files that you want to persist. Not needed for most starting fresh with Pi-hole v6. If you're upgrading from v5 you and have used this directory before, you should keep it enabled for the first v6 container start to allow for a complete migration. It can be removed afterwards. Needs environment variable FTLCONF_misc_etc_dnsmasq_d: 'true'
-      #- './etc-dnsmasq.d:/etc/dnsmasq.d'
     cap_add:
       # See https://github.com/pi-hole/docker-pi-hole#note-on-capabilities
       # Optional, if Pi-hole should get some more processing time
       - SYS_NICE
     restart: unless-stopped
-
   wireshark:
     image: lscr.io/linuxserver/wireshark:latest
     container_name: wireshark
@@ -289,15 +284,22 @@ services:
       - ./config/wireshark:/config
     restart: unless-stopped
 
-volumes:
-  datadir:
-
 networks:
-  nginx-routable:
+  nginx:
     driver: bridge
+    internal: true
+
+  host_bridge:
+    driver: bridge
+
+  plex:
+    driver: ipvlan
+    driver_opts:
+      parent: enp3s0
     ipam:
       config:
-      - subnet: 192.168.10.0/24
-        gateway: 192.168.10.1
-  wireguard:
-    driver: bridge
+        - subnet: 192.168.10.0/24
+          gateway: 192.168.10.1
+
+volumes:
+  datadir:
