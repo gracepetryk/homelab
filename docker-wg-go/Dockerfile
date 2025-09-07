@@ -12,7 +12,7 @@ FROM alpine:latest
 COPY --from=build /dist/wireguard-go /usr/local/bin/wireguard-go
 RUN chmod +x /usr/local/bin/wireguard-go
 
-RUN apk add iproute2 wireguard-tools curl
+RUN apk add iproute2 wireguard-tools curl jq
 
 COPY wg0.conf /etc/wireguard/
 COPY resolv.conf /tmp/resolv.conf

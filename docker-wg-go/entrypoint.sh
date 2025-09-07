@@ -35,17 +35,16 @@ run ip addr add "$Address" dev "$iface"
 run ip link set $iface up
 
 endpoint="$(wg showconf $iface | grep Endpoint | tr -d ' ' | cut -d '=' -f2 | cut -d ':' -f1)"
+default_iface="$(ip -j route show to 0.0.0.0/0 | jq -r '.[].dev')"
+default_gateway="$(ip -j route show to 0.0.0.0/0 | jq -r '.[].gateway')"
 
-run ip rule add to $endpoint lookup main pref 30
-run ip rule add to $SUBNET lookup main pref 30
-run ip rule add to all lookup 80 pref 40
-run ip route add default dev wg0 table 80
+run ip route add to $endpoint dev $default_iface via $default_gateway
+run ip route change default dev $iface
 run ip route get 1.1.1.1
 
 run curl ifconfig.me 2>/dev/null; echo
 run wg
 run curl ifconfig.me 2>/dev/null; echo
-
 
 trap "kill $pid; exit" INT TERM EXIT
 
